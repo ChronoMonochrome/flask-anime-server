@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  anisub-player:
+    build: .
+    container_name: anisub_server
+    ports:
+      - "5000:5000"
+    volumes:
+      # Format: HOST_PATH : CONTAINER_PATH
+      # Change the left side to your actual anime folder path
+      - "/media/system3/anime:/app/anime_library"
+    environment:
+      - FLASK_ENV=production
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
