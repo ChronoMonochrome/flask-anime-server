@@ -136,7 +136,7 @@ def player(folder_name, video_name):
         select { background: #222; color: white; border: 1px solid #444; padding: 4px; border-radius: 4px; }
         .subtitle-display { background: #111; padding: 15px; border-top: 1px solid #333; color: white; min-height: 60px; flex-shrink: 0; }
         #customSubs { position: absolute; bottom: 2%; width: 100%; text-align: center; pointer-events: none; z-index: 10; transition: bottom 0.3s; }
-        .sub-inner { color: white; font-size: 3.2em; text-shadow: 2px 2px 4px #000; font-weight: bold; }
+        .sub-inner { color: white; font-size: 2.0em; text-shadow: 2px 2px 4px #000; font-weight: bold; }
         .player-wrapper:fullscreen video { max-height: 100vh; width: 100vw; }
         .hide-cursor { cursor: none !important; }
     </style>
