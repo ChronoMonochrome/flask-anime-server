@@ -205,6 +205,34 @@ def player(folder_name, video_name):
                 resetTimer();
             }}
 
+            // --- KEYBOARD SHORTCUTS ---
+            document.addEventListener('keydown', (e) => {{
+                // Ignore if user is typing in a search box or select menu
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+
+                switch (e.key) {{
+                    case 'ArrowLeft':
+                        e.preventDefault();
+                        video.currentTime = Math.max(0, video.currentTime - 3);
+                        triggerSeek('L', '-3s'); // Show feedback with custom text
+                        break;
+                    case 'ArrowRight':
+                        e.preventDefault();
+                        video.currentTime = Math.min(video.duration, video.currentTime + 3);
+                        triggerSeek('R', '+3s'); // Show feedback with custom text
+                        break;
+                    case ' ': // Spacebar for play/pause
+                        e.preventDefault();
+                        togglePlay();
+                        break;
+                    case 'f': // 'f' for fullscreen
+                        e.preventDefault();
+                        toggleFullScreen();
+                        break;
+                }}
+                resetTimer(); // Show UI when a key is pressed
+            }});
+
             function togglePlay() {{
                 if (video.paused) {{
                     video.play();
@@ -215,9 +243,17 @@ def player(folder_name, video_name):
                 }}
             }}
 
-            function triggerSeek(dir) {{
+            function triggerSeek(dir, label) {{
                 const el = document.getElementById(dir === 'L' ? 'seekL' : 'seekR');
-                video.currentTime += (dir === 'L' ? -10 : 10);
+
+                // If no label passed (from the click handler), default to 10s
+                if (!label) {{
+                    video.currentTime += (dir === 'L' ? -10 : 10);
+                    el.innerText = dir === 'L' ? '-10s' : '+10s';
+                }} else {{
+                    el.innerText = label;
+                }}
+
                 el.style.opacity = '1';
                 setTimeout(() => {{ el.style.opacity = '0'; }}, 500);
             }}
