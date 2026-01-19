@@ -195,8 +195,15 @@ def player(folder_name, video_name):
 
                 <div class="custom-controls" id="controlsBar" onclick="event.stopPropagation()">
                     <input type="range" class="seek-bar" id="seekBar" value="0" step="0.1"
-                           oninput="updatePreview(this.value)" onchange="manualSeek(this.value)"
-                           onmousedown="showPreview()" onmouseup="hidePreview()" ontouchstart="showPreview()" ontouchend="hidePreview()">
+       oninput="updatePreview(this.value)"
+       onchange="manualSeek(this.value)"
+       onmousemove="handleHover(event)"
+       onmouseenter="showPreview()"
+       onmouseleave="hidePreview()"
+       onmousedown="showPreview()"
+       onmouseup="hidePreview()"
+       ontouchstart="showPreview()"
+       ontouchend="hidePreview()">
 
                     <div class="controls-row">
                         <div class="control-group">
@@ -282,15 +289,40 @@ def player(folder_name, video_name):
                 el.style.opacity = '1'; setTimeout(() => {{ el.style.opacity = '0'; }}, 500);
             }}
 
-            // --- OPTIMIZED PREVIEW LOGIC ---
-            function showPreview() {{ previewContainer.style.display = 'flex'; }}
-            function hidePreview() {{ previewContainer.style.display = 'none'; }}
+            /**
+            * Calculates the timestamp based on mouse position relative to the seek bar
+            * and triggers the preview update.
+            */
+            function handleHover(e) {{
+                // Calculate the percentage of the bar based on mouse X position
+                const rect = seekBar.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const percent = Math.min(Math.max(0, x / rect.width), 1) * 100;
+
+                // Only update if we aren't currently dragging (oninput handles dragging)
+                // This allows the preview to follow the mouse cursor
+                updatePreview(percent);
+            }}
+
+            function showPreview() {{
+                previewContainer.style.display = 'flex';
+            }}
+
+            function hidePreview() {{
+                // Small timeout prevents flickering when moving fast
+                setTimeout(() => {{
+                    previewContainer.style.display = 'none';
+                }}, 50);
+            }}
 
             function updatePreview(val) {{
                 const targetTime = (val / 100) * video.duration;
                 previewTime.innerText = formatTime(targetTime);
+
+                // Position the preview box directly above the calculated percentage
                 previewContainer.style.left = val + "%";
 
+                // Throttle logic to prevent server spam
                 if (isPreviewLoading) {{
                     pendingPreviewTime = targetTime;
                     return;
@@ -298,7 +330,12 @@ def player(folder_name, video_name):
                 loadPreviewFrame(targetTime);
             }}
 
+            /**
+            * Fetches the frame from the optimized Python backend
+            */
             function loadPreviewFrame(time) {{
+                if (isNaN(time)) return;
+
                 isPreviewLoading = true;
                 const tempImg = new Image();
                 const url = `{BASE_PATH}/preview/{{{{ folder_name | urlencode }}}}/{{{{ video_name | urlencode }}}}?t=${{time}}`;
