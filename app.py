@@ -1,13 +1,18 @@
 import os
+import cv2
 import mimetypes
 from urllib.parse import quote, unquote
-from flask import Flask, send_from_directory, render_template_string, abort, Response, Blueprint
+from flask import Flask, send_from_directory, render_template_string, abort, Response, Blueprint, request
 
 app = Flask(__name__)
 BASE_DIR = os.path.join("/app/anime_library")
 BASE_PATH = "/侍の道"
 
 anisub_bp = Blueprint('anisub', __name__, url_prefix=BASE_PATH)
+
+# Global dictionary to keep video captures open for fast seeking
+# format: { "video_path": cv2.VideoCapture object }
+preview_caps = {}
 
 # --- GLOBAL STYLES ---
 KODI_STYLE = """
@@ -40,10 +45,44 @@ def get_poster(folder_name):
 
 # --- ROUTES ---
 
+@anisub_bp.route('/preview/<path:folder_name>/<path:video_name>')
+def get_preview(folder_name, video_name):
+    try:
+        t = float(request.args.get('t', 0))
+        video_path = os.path.join(BASE_DIR, unquote(folder_name), unquote(video_name))
+
+        # Optimization: Reuse Capture objects to avoid file open overhead (approx 500ms saved)
+        if video_path not in preview_caps:
+            # Simple cache management: don't keep more than 5 videos open
+            if len(preview_caps) > 5:
+                old_path = next(iter(preview_caps))
+                preview_caps[old_path].release()
+                del preview_caps[old_path]
+            preview_caps[video_path] = cv2.VideoCapture(video_path)
+
+        cap = preview_caps[video_path]
+        cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000)
+        success, frame = cap.read()
+
+        if not success:
+            return abort(404)
+
+        # Fast Resize: Smaller thumbnails (180px) decode and transfer much faster
+        height, width = frame.shape[:2]
+        new_width = 180
+        new_height = int(height * (new_width / width))
+        resized = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
+
+        # Low compression quality (50) is perfect for small seek previews
+        _, buffer = cv2.imencode('.jpg', resized, [cv2.IMWRITE_JPEG_QUALITY, 50])
+        return Response(buffer.tobytes(), mimetype='image/jpeg')
+    except Exception:
+        abort(500)
+
 @anisub_bp.route('/')
 def index():
     folders = sorted([d for d in os.listdir(BASE_DIR) if os.path.isdir(os.path.join(BASE_DIR, d))])
-    html = f"""
+    return render_template_string(f"""
     <!DOCTYPE html><html><head><title>Anime Library</title>{KODI_STYLE}</head>
     <body class="content-padding">
         <h1>Anime Library</h1>
@@ -56,8 +95,7 @@ def index():
             {{% endfor %}}
         </div>
     </body></html>
-    """
-    return render_template_string(html, folders=folders, get_poster=get_poster)
+    """, folders=folders, get_poster=get_poster)
 
 @anisub_bp.route('/show/<path:folder_name>')
 def list_episodes(folder_name):
@@ -66,7 +104,7 @@ def list_episodes(folder_name):
     if not os.path.exists(folder_path): abort(404)
     video_exts = ('.mkv', '.mp4', '.webm')
     episodes = sorted([f for f in os.listdir(folder_path) if f.lower().endswith(video_exts)])
-    template = f"""
+    return render_template_string(f"""
     <!DOCTYPE html><html><head><title>{{{{ folder_name }}}}</title>{KODI_STYLE}</head>
     <body class="content-padding">
         <a href="{BASE_PATH}/" class="back-btn">← BACK TO LIBRARY</a>
@@ -88,8 +126,7 @@ def list_episodes(folder_name):
             }}
         </script>
     </body></html>
-    """
-    return render_template_string(template, folder_name=folder_name, episodes=episodes)
+    """, folder_name=folder_name, episodes=episodes)
 
 @anisub_bp.route('/play/<path:folder_name>/<path:video_name>')
 def player(folder_name, video_name):
@@ -98,41 +135,35 @@ def player(folder_name, video_name):
     video_exts = ('.mkv', '.mp4', '.webm')
     all_eps = sorted([f for f in os.listdir(folder_path) if f.lower().endswith(video_exts)])
     curr_idx = all_eps.index(video_name)
-    
+
     prev_ep = all_eps[curr_idx - 1] if curr_idx > 0 else None
     next_ep = all_eps[curr_idx + 1] if curr_idx < len(all_eps) - 1 else None
     srt_name = os.path.splitext(video_name)[0] + ".srt"
 
     player_styles = """
     <style>
-        #mainPlayerContainer { 
-            background: #000; display: flex; flex-direction: column; 
-            width: 100%; max-height: 92vh; margin: auto; position: relative;
-        }
-        .player-wrapper { 
-            position: relative; width: 100%; background: #000; 
-            overflow: hidden; cursor: default; display: flex; align-items: center; justify-content: center;
-        }
+        #mainPlayerContainer { background: #000; display: flex; flex-direction: column; width: 100%; max-height: 92vh; margin: auto; position: relative; }
+        .player-wrapper { position: relative; width: 100%; background: #000; overflow: hidden; cursor: default; display: flex; align-items: center; justify-content: center; }
         video { width: 100%; max-height: 75vh; display: block; z-index: 1; pointer-events: none; }
-        .seek-feedback {
-            position: absolute; top: 50%; transform: translateY(-50%);
-            background: rgba(255,255,255,0.2); border-radius: 50%;
-            width: 80px; height: 80px; display: flex; align-items: center; justify-content: center;
-            opacity: 0; pointer-events: none; transition: opacity 0.2s; z-index: 40; color: white; font-weight: bold;
-        }
+        .seek-feedback { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(255,255,255,0.2); border-radius: 50%; width: 80px; height: 80px; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.2s; z-index: 40; color: white; font-weight: bold; }
         .seek-left { left: 10%; } .seek-right { right: 10%; }
-        .custom-controls {
-            position: absolute; bottom: 0; left: 0; width: 100%;
-            background: linear-gradient(transparent, rgba(0, 0, 0, 0.95) 70%);
-            display: flex; flex-direction: column; padding: 15px; 
-            z-index: 100; box-sizing: border-box; transition: opacity 0.4s ease;
-            opacity: 1;
+
+        #previewContainer {
+            position: absolute; bottom: 85px; left: 0; transform: translateX(-50%);
+            width: 180px; border: 2px solid var(--accent); border-radius: 6px;
+            background: #000; display: none; flex-direction: column; align-items: center;
+            z-index: 200; pointer-events: none; overflow: hidden; box-shadow: 0 0 15px rgba(0,0,0,0.8);
         }
+        #previewImg { width: 100%; height: auto; display: block; background: #222; }
+        #previewTime { font-family: monospace; font-size: 0.8em; padding: 4px; background: rgba(0,0,0,0.9); width: 100%; text-align: center; color: var(--accent); }
+
+        .custom-controls { position: absolute; bottom: 0; left: 0; width: 100%; background: linear-gradient(transparent, rgba(0, 0, 0, 0.95) 70%); display: flex; flex-direction: column; padding: 15px; z-index: 100; box-sizing: border-box; transition: opacity 0.4s ease; opacity: 1; }
         .controls-row { display: flex; align-items: center; justify-content: space-between; margin-top: 5px;}
+        .time-display { font-family: monospace; font-size: 0.9em; min-width: 120px; color: #ccc; }
         .control-group { display: flex; align-items: center; gap: 15px; }
         .control-btn { background: none; border: none; color: white; cursor: pointer; padding: 5px; }
         .control-btn svg { width: 30px; height: 30px; fill: currentColor; }
-        .seek-bar { width: 100%; accent-color: var(--accent); cursor: pointer; height: 5px; }
+        .seek-bar { width: 100%; accent-color: var(--accent); cursor: pointer; height: 6px; }
         select { background: #222; color: white; border: 1px solid #444; padding: 4px; border-radius: 4px; }
         .subtitle-display { background: #111; padding: 15px; border-top: 1px solid #333; color: white; min-height: 60px; flex-shrink: 0; }
         #customSubs { position: absolute; bottom: 2%; width: 100%; text-align: center; pointer-events: none; z-index: 10; transition: bottom 0.3s; }
@@ -142,7 +173,7 @@ def player(folder_name, video_name):
     </style>
     """
 
-    template = f"""
+    return render_template_string(f"""
     <!DOCTYPE html><html><head><title>Anisub Player</title>{KODI_STYLE}{player_styles}</head>
     <body>
         <a href="{BASE_PATH}/show/{{{{ folder_name | urlencode }}}}" class="back-btn">← BACK TO LIST</a>
@@ -152,16 +183,27 @@ def player(folder_name, video_name):
                     <source src="{BASE_PATH}/stream/{{{{ folder_name | urlencode }}}}/{{{{ video_name | urlencode }}}}" type="video/mp4">
                     <track id="mainSub" kind="subtitles" src="{BASE_PATH}/sub/{{{{ folder_name | urlencode }}}}/{{{{ srt_name | urlencode }}}}" default>
                 </video>
+
+                <div id="previewContainer">
+                    <img id="previewImg" src="">
+                    <div id="previewTime">00:00</div>
+                </div>
+
                 <div id="seekL" class="seek-feedback seek-left">-10s</div>
                 <div id="seekR" class="seek-feedback seek-right">+10s</div>
                 <div id="customSubs"><span class="sub-inner" id="subSpan"></span></div>
+
                 <div class="custom-controls" id="controlsBar" onclick="event.stopPropagation()">
-                    <input type="range" class="seek-bar" id="seekBar" value="0" step="0.1" oninput="manualSeek(this.value)">
+                    <input type="range" class="seek-bar" id="seekBar" value="0" step="0.1"
+                           oninput="updatePreview(this.value)" onchange="manualSeek(this.value)"
+                           onmousedown="showPreview()" onmouseup="hidePreview()" ontouchstart="showPreview()" ontouchend="hidePreview()">
+
                     <div class="controls-row">
                         <div class="control-group">
                             <button class="control-btn" onclick="location.href='{BASE_PATH}/play/{{{{ folder_name | urlencode }}}}/{{{{ prev_ep | urlencode }}}}'" {{ 'disabled' if not prev_ep else '' }}><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg></button>
                             <button class="control-btn" onclick="togglePlay()"><svg viewBox="0 0 24 24" id="playIcon"><path d="M8 5v14l11-7z"/></svg></button>
                             <button class="control-btn" onclick="location.href='{BASE_PATH}/play/{{{{ folder_name | urlencode }}}}/{{{{ next_ep | urlencode }}}}'" {{ 'disabled' if not next_ep else '' }}><svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg></button>
+                            <div class="time-display"><span id="currTime">0:00</span> / <span id="totalTime">0:00</span></div>
                         </div>
                         <div class="control-group">
                             <select id="speedSelect" onchange="video.playbackRate = this.value">
@@ -184,11 +226,26 @@ def player(folder_name, video_name):
             const controlsBar = document.getElementById('controlsBar');
             const playIcon = document.getElementById('playIcon');
             const seekBar = document.getElementById('seekBar');
+            const currTimeEl = document.getElementById('currTime');
+            const totalTimeEl = document.getElementById('totalTime');
+            const previewContainer = document.getElementById('previewContainer');
+            const previewImg = document.getElementById('previewImg');
+            const previewTime = document.getElementById('previewTime');
             const subSpan = document.getElementById('subSpan');
             const subText = document.getElementById('subText');
             const subContainer = document.getElementById('customSubs');
-            
+
             let uiTimer, lastClick = 0;
+            let isPreviewLoading = false;
+            let pendingPreviewTime = null;
+
+            function formatTime(sec) {{
+                if (isNaN(sec)) return "0:00";
+                const h = Math.floor(sec / 3600);
+                const m = Math.floor((sec % 3600) / 60);
+                const s = Math.floor(sec % 60);
+                return h > 0 ? `${{h}}:${{m.toString().padStart(2, '0')}}:${{s.toString().padStart(2, '0')}}` : `${{m}}:${{s.toString().padStart(2, '0')}}`;
+            }}
 
             function handleGlobalClick(e) {{
                 const now = Date.now();
@@ -198,90 +255,85 @@ def player(folder_name, video_name):
                     if (x < rect.width / 3) triggerSeek('L');
                     else if (x > (rect.width / 3) * 2) triggerSeek('R');
                     lastClick = 0;
-                }} else {{
-                    togglePlay();
-                    lastClick = now;
-                }}
+                }} else {{ togglePlay(); lastClick = now; }}
                 resetTimer();
             }}
 
-            // --- KEYBOARD SHORTCUTS ---
             document.addEventListener('keydown', (e) => {{
-                // Ignore if user is typing in a search box or select menu
                 if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
-
                 switch (e.key) {{
-                    case 'ArrowLeft':
-                        e.preventDefault();
-                        video.currentTime = Math.max(0, video.currentTime - 3);
-                        triggerSeek('L', '-3s'); // Show feedback with custom text
-                        break;
-                    case 'ArrowRight':
-                        e.preventDefault();
-                        video.currentTime = Math.min(video.duration, video.currentTime + 3);
-                        triggerSeek('R', '+3s'); // Show feedback with custom text
-                        break;
-                    case ' ': // Spacebar for play/pause
-                        e.preventDefault();
-                        togglePlay();
-                        break;
-                    case 'f': // 'f' for fullscreen
-                        e.preventDefault();
-                        toggleFullScreen();
-                        break;
+                    case 'ArrowLeft': e.preventDefault(); video.currentTime = Math.max(0, video.currentTime - 3); triggerSeek('L', '-3s'); break;
+                    case 'ArrowRight': e.preventDefault(); video.currentTime = Math.min(video.duration, video.currentTime + 3); triggerSeek('R', '+3s'); break;
+                    case ' ': e.preventDefault(); togglePlay(); break;
+                    case 'f': e.preventDefault(); toggleFullScreen(); break;
                 }}
-                resetTimer(); // Show UI when a key is pressed
+                resetTimer();
             }});
 
             function togglePlay() {{
-                if (video.paused) {{
-                    video.play();
-                    playIcon.innerHTML = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
-                }} else {{
-                    video.pause();
-                    playIcon.innerHTML = '<path d="M8 5v14l11-7z"/>';
-                }}
+                if (video.paused) {{ video.play(); playIcon.innerHTML = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>'; }}
+                else {{ video.pause(); playIcon.innerHTML = '<path d="M8 5v14l11-7z"/>'; }}
             }}
 
             function triggerSeek(dir, label) {{
                 const el = document.getElementById(dir === 'L' ? 'seekL' : 'seekR');
-
-                // If no label passed (from the click handler), default to 10s
-                if (!label) {{
-                    video.currentTime += (dir === 'L' ? -10 : 10);
-                    el.innerText = dir === 'L' ? '-10s' : '+10s';
-                }} else {{
-                    el.innerText = label;
-                }}
-
-                el.style.opacity = '1';
-                setTimeout(() => {{ el.style.opacity = '0'; }}, 500);
+                if (!label) {{ video.currentTime += (dir === 'L' ? -10 : 10); el.innerText = dir === 'L' ? '-10s' : '+10s'; }}
+                else {{ el.innerText = label; }}
+                el.style.opacity = '1'; setTimeout(() => {{ el.style.opacity = '0'; }}, 500);
             }}
 
+            // --- OPTIMIZED PREVIEW LOGIC ---
+            function showPreview() {{ previewContainer.style.display = 'flex'; }}
+            function hidePreview() {{ previewContainer.style.display = 'none'; }}
+
+            function updatePreview(val) {{
+                const targetTime = (val / 100) * video.duration;
+                previewTime.innerText = formatTime(targetTime);
+                previewContainer.style.left = val + "%";
+
+                if (isPreviewLoading) {{
+                    pendingPreviewTime = targetTime;
+                    return;
+                }}
+                loadPreviewFrame(targetTime);
+            }}
+
+            function loadPreviewFrame(time) {{
+                isPreviewLoading = true;
+                const tempImg = new Image();
+                const url = `{BASE_PATH}/preview/{{{{ folder_name | urlencode }}}}/{{{{ video_name | urlencode }}}}?t=${{time}}`;
+
+                tempImg.onload = () => {{
+                    previewImg.src = url;
+                    isPreviewLoading = false;
+                    if (pendingPreviewTime !== null) {{
+                        const next = pendingPreviewTime;
+                        pendingPreviewTime = null;
+                        loadPreviewFrame(next);
+                    }}
+                }};
+                tempImg.onerror = () => {{ isPreviewLoading = false; }};
+                tempImg.src = url;
+            }}
+
+            function manualSeek(val) {{ video.currentTime = (val / 100) * video.duration; }}
+
             function resetTimer() {{
-                controlsBar.style.opacity = '1';
-                controlsBar.style.pointerEvents = 'auto';
-                videoArea.classList.remove('hide-cursor');
-                subContainer.style.bottom = "15%";
+                controlsBar.style.opacity = '1'; controlsBar.style.pointerEvents = 'auto';
+                videoArea.classList.remove('hide-cursor'); subContainer.style.bottom = "15%";
                 clearTimeout(uiTimer);
                 if (!video.paused) {{
                     uiTimer = setTimeout(() => {{
-                        controlsBar.style.opacity = '0';
-                        controlsBar.style.pointerEvents = 'none';
-                        videoArea.classList.add('hide-cursor');
-                        subContainer.style.bottom = "2%";
+                        controlsBar.style.opacity = '0'; controlsBar.style.pointerEvents = 'none';
+                        videoArea.classList.add('hide-cursor'); subContainer.style.bottom = "2%";
                     }}, 3000);
                 }}
             }}
 
             function toggleCC() {{
                 const track = video.textTracks[0];
-                if (track.mode === 'hidden' || track.mode === 'showing') {{
-                    track.mode = 'disabled';
-                    subSpan.innerText = "";
-                }} else {{
-                    track.mode = 'hidden';
-                }}
+                track.mode = (track.mode === 'disabled') ? 'hidden' : 'disabled';
+                if (track.mode === 'disabled') subSpan.innerText = "";
                 resetTimer();
             }}
 
@@ -290,17 +342,23 @@ def player(folder_name, video_name):
                 else document.exitFullscreen();
             }}
 
-            function manualSeek(val) {{
-                video.currentTime = (val / 100) * video.duration;
-            }}
-
             video.addEventListener('timeupdate', () => {{
                 seekBar.value = (video.currentTime / video.duration) * 100 || 0;
+                currTimeEl.innerText = formatTime(video.currentTime);
                 if (Math.floor(video.currentTime) % 5 === 0) {{
                     const history = JSON.parse(localStorage.getItem('anisub_history') || '{{}}');
                     history["{folder_name}"] = {{ last_ep: "{video_name}", time: video.currentTime }};
                     localStorage.setItem('anisub_history', JSON.stringify(history));
                 }}
+            }});
+
+            video.addEventListener('loadedmetadata', () => {{
+                totalTimeEl.innerText = formatTime(video.duration);
+                const hist = JSON.parse(localStorage.getItem('anisub_history') || '{{}}');
+                if (hist["{folder_name}"]?.last_ep === "{video_name}") {{
+                    video.currentTime = hist["{folder_name}"]?.time || 0;
+                }}
+                resetTimer();
             }});
 
             const track = video.textTracks[0];
@@ -309,25 +367,14 @@ def player(folder_name, video_name):
                 if (this.mode !== 'disabled' && this.activeCues?.length > 0) {{
                     const txt = this.activeCues[0].text;
                     subSpan.innerText = subText.innerText = txt;
-                }} else if (this.activeCues?.length === 0) {{
-                    subSpan.innerText = "";
-                }}
+                }} else if (this.activeCues?.length === 0) {{ subSpan.innerText = ""; }}
             }};
 
-            video.addEventListener('loadedmetadata', () => {{
-                const hist = JSON.parse(localStorage.getItem('anisub_history') || '{{}}');
-                if (hist["{folder_name}"]?.last_ep === "{video_name}") {{
-                    video.currentTime = hist["{folder_name}"]?.time || 0;
-                }}
-                resetTimer();
-            }});
-            
             video.addEventListener('pause', resetTimer);
             video.addEventListener('play', resetTimer);
         </script>
     </body></html>
-    """
-    return render_template_string(template, folder_name=folder_name, video_name=video_name, srt_name=srt_name, prev_ep=prev_ep, next_ep=next_ep)
+    """, folder_name=folder_name, video_name=video_name, srt_name=srt_name, prev_ep=prev_ep, next_ep=next_ep)
 
 @anisub_bp.route('/stream/<path:folder_name>/<path:video_name>')
 def stream_video(folder_name, video_name):

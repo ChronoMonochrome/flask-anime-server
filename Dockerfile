@@ -1,8 +1,17 @@
-# Use a slim Python image for a smaller footprint
 FROM python:3.11-slim
 
 # Set the working directory inside the container
 WORKDIR /app
+
+# Install system dependencies for OpenCV (Updated for Debian Trixie/Latest)
+RUN apt-get update && apt-get install -y \
+    libgl1 \
+    libglib2.0-0 \
+    libxcb1 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
