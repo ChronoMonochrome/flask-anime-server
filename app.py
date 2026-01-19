@@ -179,9 +179,17 @@ def player(folder_name, video_name):
                     <input type="range" class="seek-bar" id="seekBar" value="0" step="0.1" oninput="updatePreview(this.value)" onchange="manualSeek(this.value)" onmousemove="handleHover(event)" onmouseenter="showPreview()" onmouseleave="hidePreview()" onmousedown="showPreview()" onmouseup="hidePreview()" ontouchstart="showPreview()" ontouchend="hidePreview()">
                     <div class="controls-row">
                         <div class="control-group">
-                            <button class="control-btn" onclick="location.href='{BASE_PATH}/play/{{{{ folder_name | urlencode }}}}/{{{{ prev_ep | urlencode }}}}'" {{ 'disabled' if prev_ep is none else '' }}><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg></button>
+                            <button class="control-btn"
+                                    onclick="location.href='{BASE_PATH}/play/{{{{ folder_name | urlencode }}}}/{{{{ prev_ep | urlencode }}}}'"
+                                    {{{{ 'disabled' if prev_ep is none else '' }}}}>
+                                <svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+                            </button>
                             <button class="control-btn" onclick="togglePlay(true)"><svg viewBox="0 0 24 24" id="playIcon"><path d="M8 5v14l11-7z"/></svg></button>
-                            <button class="control-btn" onclick="location.href='{BASE_PATH}/play/{{{{ folder_name | urlencode }}}}/{{{{ next_ep | urlencode }}}}'" {{ 'disabled' if next_ep is none else '' }}><svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg></button>
+                            <button class="control-btn"
+                                    onclick="location.href='{BASE_PATH}/play/{{{{ folder_name | urlencode }}}}/{{{{ next_ep | urlencode }}}}'"
+                                    {{{{ 'disabled' if next_ep is none else '' }}}}>
+                                <svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+                            </button>
                             <div class="time-display"><span id="currTime">0:00</span> / <span id="totalTime">0:00</span></div>
                         </div>
                         <div class="control-group">
