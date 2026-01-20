@@ -2,7 +2,7 @@ import os
 import cv2
 import mimetypes
 from urllib.parse import quote, unquote
-from flask import Flask, send_from_directory, render_template_string, abort, Response, Blueprint, request
+from flask import Flask, send_from_directory, render_template_string, abort, Response, Blueprint, request, send_file
 
 app = Flask(__name__)
 BASE_DIR = os.path.join("/app/anime_library")
@@ -122,6 +122,12 @@ def list_episodes(folder_name):
 def player(folder_name, video_name):
     folder_name, video_name = unquote(folder_name), unquote(video_name)
     folder_path = os.path.join(BASE_DIR, folder_name)
+
+    # 1. Detect available resolution subfolders
+    # We check for physical directories like '480p', '720p', etc.
+    possible_res = ['240p', '360p', '480p', '720p', '1080p']
+    available_res = [r for r in possible_res if os.path.isdir(os.path.join(folder_path, r))]
+
     video_exts = ('.mkv', '.mp4', '.webm')
     all_eps = sorted([f for f in os.listdir(folder_path) if f.lower().endswith(video_exts)])
 
@@ -130,11 +136,12 @@ def player(folder_name, video_name):
     except ValueError:
         abort(404)
 
-    # FIX: Explicitly set to None for boundaries to prevent index wrap-around
+    # Boundary checks for navigation
     prev_ep = all_eps[curr_idx - 1] if curr_idx > 0 else None
     next_ep = all_eps[curr_idx + 1] if curr_idx < len(all_eps) - 1 else None
     srt_name = os.path.splitext(video_name)[0] + ".srt"
 
+    # Minimal player styles (keeping your existing style definitions)
     player_styles = """
     <style>
         #mainPlayerContainer { background: #000; display: flex; flex-direction: column; width: 100%; height: 100vh; height: 100svh; position: fixed; top: 0; left: 0; overflow: hidden; }
@@ -149,7 +156,7 @@ def player(folder_name, video_name):
         .control-btn svg { width: 24px; height: 24px; fill: currentColor; }
         .seek-bar { width: 100%; accent-color: var(--accent); height: 20px; cursor: pointer; touch-action: none; margin: 0; }
         #customSubs { position: absolute; bottom: 2%; width: 100%; text-align: center; pointer-events: none; z-index: 10; transition: bottom 0.3s ease; }
-        .sub-inner { color: white; font-size: 1.3em; text-shadow: 2px 2px 4px #000; font-weight: bold; padding: 0 10px; }
+        .sub-inner { color: white; font-size: 2.1em; text-shadow: 2px 2px 4px #000; font-weight: bold; padding: 0 10px; }
         .time-display { font-family: monospace; font-size: 0.75em; color: #bbb; white-space: nowrap; margin-left: 5px; }
         .subtitle-display { background: #111; padding: 10px 15px; color: white; min-height: 40px; font-size: 0.85em; border-top: 1px solid #333; z-index: 5; }
         .player-back { position: absolute; top: 8px; left: 8px; z-index: 150; text-shadow: 0 0 5px #000; font-size: 0.8em; }
@@ -157,6 +164,7 @@ def player(folder_name, video_name):
         .seek-feedback { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(255,255,255,0.2); border-radius: 50%; width: 60px; height: 60px; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.2s; z-index: 40; color: white; font-weight: bold; }
         .seek-left { left: 10%; } .seek-right { right: 10%; }
         #centerFeedback { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.5); border-radius: 50%; padding: 15px; opacity: 0; pointer-events: none; z-index: 45; transition: opacity 0.3s; color: white; }
+        select.player-select { background:#222; color:white; border:none; border-radius:4px; padding:3px; font-size: 0.8em; cursor: pointer; }
     </style>
     """
 
@@ -167,7 +175,7 @@ def player(folder_name, video_name):
             <a href="{BASE_PATH}/show/{{{{ folder_name | urlencode }}}}" class="back-btn player-back">← BACK</a>
             <div class="player-wrapper" id="videoArea" onmousemove="resetTimer()" onclick="handleGlobalClick(event)">
                 <video id="videoPlayer" playsinline preload="metadata">
-                    <source src="{BASE_PATH}/stream/{{{{ folder_name | urlencode }}}}/{{{{ video_name | urlencode }}}}" type="video/mp4">
+                    <source id="videoSource" src="{BASE_PATH}/stream/{{{{ folder_name | urlencode }}}}/{{{{ video_name | urlencode }}}}" type="video/mp4">
                     <track id="mainSub" kind="subtitles" src="{BASE_PATH}/sub/{{{{ folder_name | urlencode }}}}/{{{{ srt_name | urlencode }}}}" default>
                 </video>
                 <div id="centerFeedback"><svg width="30" height="30" fill="white" viewBox="0 0 24 24" id="feedbackIcon"></svg></div>
@@ -179,21 +187,23 @@ def player(folder_name, video_name):
                     <input type="range" class="seek-bar" id="seekBar" value="0" step="0.1" oninput="updatePreview(this.value)" onchange="manualSeek(this.value)" onmousemove="handleHover(event)" onmouseenter="showPreview()" onmouseleave="hidePreview()" onmousedown="showPreview()" onmouseup="hidePreview()" ontouchstart="showPreview()" ontouchend="hidePreview()">
                     <div class="controls-row">
                         <div class="control-group">
-                            <button class="control-btn"
-                                    onclick="location.href='{BASE_PATH}/play/{{{{ folder_name | urlencode }}}}/{{{{ prev_ep | urlencode }}}}'"
-                                    {{{{ 'disabled' if prev_ep is none else '' }}}}>
+                            <button class="control-btn" onclick="location.href='{BASE_PATH}/play/{{{{ folder_name | urlencode }}}}/{{{{ prev_ep | urlencode }}}}'" {{{{ 'disabled' if prev_ep is none else '' }}}}>
                                 <svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
                             </button>
                             <button class="control-btn" onclick="togglePlay(true)"><svg viewBox="0 0 24 24" id="playIcon"><path d="M8 5v14l11-7z"/></svg></button>
-                            <button class="control-btn"
-                                    onclick="location.href='{BASE_PATH}/play/{{{{ folder_name | urlencode }}}}/{{{{ next_ep | urlencode }}}}'"
-                                    {{{{ 'disabled' if next_ep is none else '' }}}}>
+                            <button class="control-btn" onclick="location.href='{BASE_PATH}/play/{{{{ folder_name | urlencode }}}}/{{{{ next_ep | urlencode }}}}'" {{{{ 'disabled' if next_ep is none else '' }}}}>
                                 <svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
                             </button>
                             <div class="time-display"><span id="currTime">0:00</span> / <span id="totalTime">0:00</span></div>
                         </div>
                         <div class="control-group">
-                            <select id="speedSelect" onchange="video.playbackRate = this.value" style="background:#222; color:white; border:none; border-radius:4px; padding:3px; font-size: 0.8em;">
+                            <select id="resSelect" class="player-select" onchange="changeResolution(this.value)">
+                                <option value="original">Original</option>
+                                {{% for res in available_res %}}
+                                <option value="{{{{ res }}}}">{{{{ res }}}}</option>
+                                {{% endfor %}}
+                            </select>
+                            <select id="speedSelect" class="player-select" onchange="video.playbackRate = this.value">
                                 <option value="1" selected>1x</option><option value="1.5">1.5x</option><option value="2">2x</option>
                             </select>
                             <button class="control-btn" onclick="toggleCC()"><svg viewBox="0 0 24 24"><path d="M19 4H5c-1.11 0-2 .9-2 2v12c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 7H9.5V10h-2v4h2v-1H11v1c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1zm7 0h-1.5V10h-2v4h2v-1H18v1c0 .55-.45 1-1 1h-3c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1z"/></svg></button>
@@ -220,6 +230,7 @@ def player(folder_name, video_name):
             const subContainer = document.getElementById('customSubs');
             const centerFeedback = document.getElementById('centerFeedback');
             const feedbackIcon = document.getElementById('feedbackIcon');
+            const resSelect = document.getElementById('resSelect');
 
             let uiTimer, lastClick = 0;
             let isPreviewLoading = false;
@@ -249,8 +260,15 @@ def player(folder_name, video_name):
             }}
 
             function togglePlay(showFeedback = false) {{
-                if (video.paused) {{ video.play(); playIcon.innerHTML = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>'; if(showFeedback) showCenterIcon('<path d="M8 5v14l11-7z"/>');
-                }} else {{ video.pause(); playIcon.innerHTML = '<path d="M8 5v14l11-7z"/>'; if(showFeedback) showCenterIcon('<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>'); }}
+                if (video.paused) {{
+                    video.play();
+                    playIcon.innerHTML = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
+                    if(showFeedback) showCenterIcon('<path d="M8 5v14l11-7z"/>');
+                }} else {{
+                    video.pause();
+                    playIcon.innerHTML = '<path d="M8 5v14l11-7z"/>';
+                    if(showFeedback) showCenterIcon('<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>');
+                }}
             }}
 
             function showCenterIcon(path) {{ feedbackIcon.innerHTML = path; centerFeedback.style.opacity = '1'; setTimeout(() => centerFeedback.style.opacity = '0', 400); }}
@@ -259,6 +277,19 @@ def player(folder_name, video_name):
                 const el = document.getElementById(dir === 'L' ? 'seekL' : 'seekR');
                 video.currentTime += (dir === 'L' ? -10 : 10);
                 el.style.opacity = '1'; setTimeout(() => {{ el.style.opacity = '0'; }}, 500);
+            }}
+
+            function changeResolution(res) {{
+                const currentTime = video.currentTime;
+                const isPaused = video.paused;
+                localStorage.setItem('anisub_preferred_res', res);
+                video.src = `{BASE_PATH}/stream/{{{{ folder_name | urlencode }}}}/{{{{ video_name | urlencode }}}}?res=${{res}}`;
+                video.load();
+                video.onloadedmetadata = () => {{
+                    video.currentTime = currentTime;
+                    if (!isPaused) video.play();
+                    video.onloadedmetadata = null;
+                }};
             }}
 
             function handleHover(e) {{
@@ -285,7 +316,11 @@ def player(folder_name, video_name):
                 isPreviewLoading = true;
                 const url = `{BASE_PATH}/preview/{{{{ folder_name | urlencode }}}}/{{{{ video_name | urlencode }}}}?t=${{time}}`;
                 const img = new Image();
-                img.onload = () => {{ previewImg.src = url; isPreviewLoading = false; if (pendingPreviewTime) {{ let t = pendingPreviewTime; pendingPreviewTime = null; loadPreviewFrame(t); }} }};
+                img.onload = () => {{
+                    previewImg.src = url;
+                    isPreviewLoading = false;
+                    if (pendingPreviewTime) {{ let t = pendingPreviewTime; pendingPreviewTime = null; loadPreviewFrame(t); }}
+                }};
                 img.src = url;
             }}
 
@@ -295,11 +330,7 @@ def player(folder_name, video_name):
                 controlsBar.style.opacity = '1';
                 controlsBar.style.pointerEvents = 'auto';
                 videoArea.classList.remove('hide-cursor');
-
-                // Lift subs higher only if controls are visible
-                // 30% for Fullscreen, 15% for normal view
                 subContainer.style.bottom = document.fullscreenElement ? "30%" : "15%";
-
                 clearTimeout(uiTimer);
                 if (!video.paused) {{
                     uiTimer = setTimeout(() => {{
@@ -341,10 +372,19 @@ def player(folder_name, video_name):
                 if (hist["{folder_name}"]?.last_ep === "{video_name}") video.currentTime = hist["{folder_name}"].time;
             }});
 
+            window.addEventListener('DOMContentLoaded', () => {{
+                const prefRes = localStorage.getItem('anisub_preferred_res') || '720p';
+                if (Array.from(resSelect.options).some(opt => opt.value === prefRes)) {{
+                    resSelect.value = prefRes;
+                    video.src = `{BASE_PATH}/stream/{{{{ folder_name | urlencode }}}}/{{{{ video_name | urlencode }}}}?res=${{prefRes}}`;
+                }}
+            }});
+
             const track = video.textTracks[0];
             track.mode = 'hidden';
             track.oncuechange = function() {{
-                if (this.activeCues?.length > 0) {{ subSpan.innerText = subText.innerText = this.activeCues[0].text;
+                if (this.activeCues?.length > 0) {{
+                    subSpan.innerText = subText.innerText = this.activeCues[0].text;
                 }} else {{ subSpan.innerText = ""; }}
             }};
 
@@ -360,15 +400,22 @@ def player(folder_name, video_name):
             }});
         </script>
     </body></html>
-    """, folder_name=folder_name, video_name=video_name, srt_name=srt_name, prev_ep=prev_ep, next_ep=next_ep)
+    """, folder_name=folder_name, video_name=video_name, srt_name=srt_name, prev_ep=prev_ep, next_ep=next_ep, available_res=available_res)
 
 @anisub_bp.route('/stream/<path:folder_name>/<path:video_name>')
 def stream_video(folder_name, video_name):
-    return send_from_directory(os.path.join(BASE_DIR, unquote(folder_name)), unquote(video_name))
+    path = os.path.join(BASE_DIR, unquote(folder_name), unquote(video_name))
+    if not os.path.exists(path): abort(404)
+    return send_file(path, conditional=True)
 
 @anisub_bp.route('/poster_file/<path:folder_name>/<path:filename>')
 def serve_poster(folder_name, filename):
-    return send_from_directory(os.path.join(BASE_DIR, unquote(folder_name)), unquote(filename))
+    folder_name, filename = unquote(folder_name), unquote(filename)
+    path = os.path.join(BASE_DIR, folder_name, filename)
+    if not os.path.exists(path): abort(404)
+    # Automatically detect if it's jpg, png, or webp
+    mime = mimetypes.guess_type(path)[0] or 'image/jpeg'
+    return send_file(path, mimetype=mime)
 
 @anisub_bp.route('/sub/<path:folder_name>/<path:srt_name>')
 def serve_subs(folder_name, srt_name):
