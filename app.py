@@ -154,7 +154,12 @@ def player(folder_name, video_name):
         .control-btn { background: none; border: none; color: white; cursor: pointer; padding: 8px; display: flex; align-items: center; }
         .control-btn:disabled { opacity: 0.3; cursor: not-allowed; pointer-events: none; }
         .control-btn svg { width: 24px; height: 24px; fill: currentColor; }
-        .seek-bar { width: 100%; accent-color: var(--accent); height: 20px; cursor: pointer; touch-action: none; margin: 0; }
+
+        /* Updated Seek Bar Area */
+        .seek-container { display: flex; align-items: center; gap: 8px; width: 100%; }
+        .seek-bar { flex-grow: 1; accent-color: var(--accent); height: 20px; cursor: pointer; touch-action: none; margin: 0; }
+        .mobile-time { display: none; font-family: monospace; font-size: 0.75em; color: #bbb; white-space: nowrap; }
+
         #customSubs { position: absolute; bottom: 2%; width: 100%; text-align: center; pointer-events: none; z-index: 10; transition: bottom 0.3s ease; }
         .sub-inner { color: white; font-size: 2.1em; text-shadow: 2px 2px 4px #000; font-weight: bold; padding: 0 10px; }
         .time-display { font-family: monospace; font-size: 0.75em; color: #bbb; white-space: nowrap; margin-left: 5px; }
@@ -165,6 +170,14 @@ def player(folder_name, video_name):
         .seek-left { left: 10%; } .seek-right { right: 10%; }
         #centerFeedback { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.5); border-radius: 50%; padding: 15px; opacity: 0; pointer-events: none; z-index: 45; transition: opacity 0.3s; color: white; }
         select.player-select { background:#222; color:white; border:none; border-radius:4px; padding:3px; font-size: 0.8em; cursor: pointer; }
+
+        /* Mobile Adjustments */
+        @media (max-width: 600px) {
+            .time-display { display: none; }
+            .mobile-time { display: block; }
+            .control-btn { padding: 5px; }
+            .control-group { gap: 2px; }
+        }
     </style>
     """
 
@@ -184,7 +197,10 @@ def player(folder_name, video_name):
                 <div id="customSubs"><span class="sub-inner" id="subSpan"></span></div>
                 <div id="previewContainer"><img id="previewImg" style="width:100%; height:auto;" src=""><div id="previewTime" style="font-size:0.7em; text-align:center; padding:2px; color:var(--accent);">00:00</div></div>
                 <div class="custom-controls" id="controlsBar" onclick="event.stopPropagation()">
-                    <input type="range" class="seek-bar" id="seekBar" value="0" step="0.1" oninput="updatePreview(this.value)" onchange="manualSeek(this.value)" onmousemove="handleHover(event)" onmouseenter="showPreview()" onmouseleave="hidePreview()" onmousedown="showPreview()" onmouseup="hidePreview()" ontouchstart="showPreview()" ontouchend="hidePreview()">
+                    <div class="seek-container">
+                        <input type="range" class="seek-bar" id="seekBar" value="0" step="0.1" oninput="updatePreview(this.value)" onchange="manualSeek(this.value)" onmousemove="handleHover(event)" onmouseenter="showPreview()" onmouseleave="hidePreview()" onmousedown="showPreview()" onmouseup="hidePreview()" ontouchstart="showPreview()" ontouchend="hidePreview()">
+                        <div class="mobile-time"><span id="currTimeMob">0:00</span> / <span id="totalTimeMob">0:00</span></div>
+                    </div>
                     <div class="controls-row">
                         <div class="control-group">
                             <button class="control-btn" onclick="location.href='{BASE_PATH}/play/{{{{ folder_name | urlencode }}}}/{{{{ prev_ep | urlencode }}}}'" {{{{ 'disabled' if prev_ep is none else '' }}}}>
@@ -198,7 +214,7 @@ def player(folder_name, video_name):
                         </div>
                         <div class="control-group">
                             <select id="resSelect" class="player-select" onchange="changeResolution(this.value)">
-                                <option value="original">Original</option>
+                                <option value="original">Orig</option>
                                 {{% for res in available_res %}}
                                 <option value="{{{{ res }}}}">{{{{ res }}}}</option>
                                 {{% endfor %}}
@@ -222,6 +238,8 @@ def player(folder_name, video_name):
             const seekBar = document.getElementById('seekBar');
             const currTimeEl = document.getElementById('currTime');
             const totalTimeEl = document.getElementById('totalTime');
+            const currTimeMob = document.getElementById('currTimeMob');
+            const totalTimeMob = document.getElementById('totalTimeMob');
             const previewContainer = document.getElementById('previewContainer');
             const previewImg = document.getElementById('previewImg');
             const previewTime = document.getElementById('previewTime');
@@ -358,7 +376,9 @@ def player(folder_name, video_name):
 
             video.addEventListener('timeupdate', () => {{
                 seekBar.value = (video.currentTime / video.duration) * 100 || 0;
-                currTimeEl.innerText = formatTime(video.currentTime);
+                const formatted = formatTime(video.currentTime);
+                currTimeEl.innerText = formatted;
+                currTimeMob.innerText = formatted;
                 if (Math.floor(video.currentTime) % 10 === 0) {{
                     const history = JSON.parse(localStorage.getItem('anisub_history') || '{{}}');
                     history["{folder_name}"] = {{ last_ep: "{video_name}", time: video.currentTime }};
@@ -367,7 +387,9 @@ def player(folder_name, video_name):
             }});
 
             video.addEventListener('loadedmetadata', () => {{
-                totalTimeEl.innerText = formatTime(video.duration);
+                const formattedTotal = formatTime(video.duration);
+                totalTimeEl.innerText = formattedTotal;
+                totalTimeMob.innerText = formattedTotal;
                 const hist = JSON.parse(localStorage.getItem('anisub_history') || '{{}}');
                 if (hist["{folder_name}"]?.last_ep === "{video_name}") video.currentTime = hist["{folder_name}"].time;
             }});
