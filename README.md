@@ -1,5 +1,8 @@
 # Anime Library Server
 
+<video src="https://github.com/user-attachments/assets/e044ec1b-4697-4d19-81ae-948cb504b6b1" controls="controls" style="max-width: 730px;">
+</video>
+
 A Flask-powered media server for local anime collections, optimized for both desktop and mobile viewing with a focus on high-readability subtitles and seamless navigation.
 
 ## 🛠️ Project Structure
