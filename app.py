@@ -123,8 +123,6 @@ def player(folder_name, video_name):
     folder_name, video_name = unquote(folder_name), unquote(video_name)
     folder_path = os.path.join(BASE_DIR, folder_name)
 
-    # 1. Detect available resolution subfolders
-    # We check for physical directories like '480p', '720p', etc.
     possible_res = ['240p', '360p', '480p', '720p', '1080p']
     available_res = [r for r in possible_res if os.path.isdir(os.path.join(folder_path, r))]
 
@@ -136,42 +134,63 @@ def player(folder_name, video_name):
     except ValueError:
         abort(404)
 
-    # Boundary checks for navigation
     prev_ep = all_eps[curr_idx - 1] if curr_idx > 0 else None
     next_ep = all_eps[curr_idx + 1] if curr_idx < len(all_eps) - 1 else None
     srt_name = os.path.splitext(video_name)[0] + ".srt"
 
-    # Minimal player styles (keeping your existing style definitions)
     player_styles = """
     <style>
         #mainPlayerContainer { background: #000; display: flex; flex-direction: column; width: 100%; height: 100vh; height: 100svh; position: fixed; top: 0; left: 0; overflow: hidden; }
-        .player-wrapper { position: relative; width: 100%; flex-grow: 1; background: #000; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+        .player-wrapper { position: relative; width: 100%; flex-grow: 1; background: #000; overflow: hidden; display: flex; align-items: center; justify-content: center; cursor: none; }
+        .player-wrapper.ui-on { cursor: default; }
         video { width: 100%; max-height: 100%; object-fit: contain; }
-        #previewContainer { position: absolute; bottom: 100px; left: 50%; transform: translateX(-50%); width: 140px; border: 1px solid var(--accent); border-radius: 4px; background: #000; display: none; flex-direction: column; z-index: 200; overflow: hidden; }
-        .custom-controls { position: absolute; bottom: 0; left: 0; width: 100%; background: linear-gradient(transparent, rgba(0, 0, 0, 0.9) 30%); padding: 5px 12px calc(15px + env(safe-area-inset-bottom)) 12px; z-index: 100; box-sizing: border-box; transition: opacity 0.3s; }
+
+        .ui-element { transition: opacity 0.25s ease-in-out; opacity: 1; visibility: visible; }
+        .ui-hidden { opacity: 0 !important; pointer-events: none !important; visibility: hidden !important; }
+
+        .custom-controls { position: absolute; bottom: 0; left: 0; width: 100%; background: linear-gradient(transparent, rgba(0, 0, 0, 0.9) 30%); padding: 5px 12px calc(15px + env(safe-area-inset-bottom)) 12px; z-index: 100; box-sizing: border-box; }
         .controls-row { display: flex; align-items: center; justify-content: space-between; margin-top: 2px; }
         .control-group { display: flex; align-items: center; gap: 4px; }
         .control-btn { background: none; border: none; color: white; cursor: pointer; padding: 8px; display: flex; align-items: center; }
         .control-btn:disabled { opacity: 0.3; cursor: not-allowed; pointer-events: none; }
         .control-btn svg { width: 24px; height: 24px; fill: currentColor; }
 
-        /* Updated Seek Bar Area */
         .seek-container { display: flex; align-items: center; gap: 8px; width: 100%; }
         .seek-bar { flex-grow: 1; accent-color: var(--accent); height: 20px; cursor: pointer; touch-action: none; margin: 0; }
         .mobile-time { display: none; font-family: monospace; font-size: 0.75em; color: #bbb; white-space: nowrap; }
+        #centerFeedback {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.6); /* Darkened slightly */
+            backdrop-filter: blur(4px);   /* Added blur for contrast */
+            border-radius: 50%; width: 72px; height: 72px;
+            display: flex; align-items: center; justify-content: center; z-index: 110;
+            pointer-events: none; opacity: 1; transition: opacity 0.3s, transform 0.3s;
+            border: 1px solid rgba(255,255,255,0.2); /* Added subtle rim */
+        }
 
-        #customSubs { position: absolute; bottom: 2%; width: 100%; text-align: center; pointer-events: none; z-index: 10; transition: bottom 0.3s ease; }
+        .seek-ripple {
+            position: absolute; top: 0; width: 40%; height: 100%;
+            background: rgba(255,255,255,0.2); display: flex; flex-direction: column;
+            align-items: center; justify-content: center; opacity: 0; pointer-events: none;
+            z-index: 40; transition: opacity 0.2s;
+        }
+        .seek-ripple.left { left: 0; border-radius: 0 100% 100% 0; }
+        .seek-ripple.right { right: 0; border-radius: 100% 0 0 100%; }
+        .seek-text {
+            color: white;
+            font-weight: bold;
+            font-size: 0.9em;
+            margin-top: 5px;
+            text-shadow: 0px 0px 4px rgba(0,0,0,0.9), 0px 0px 10px rgba(0,0,0,0.5); /* Fix for white backgrounds */
+        }
+
+        #customSubs { position: absolute; bottom: 10%; width: 100%; text-align: center; pointer-events: none; z-index: 10; transition: bottom 0.3s ease; }
         .sub-inner { color: white; font-size: 2.1em; text-shadow: 2px 2px 4px #000; font-weight: bold; padding: 0 10px; }
         .time-display { font-family: monospace; font-size: 0.75em; color: #bbb; white-space: nowrap; margin-left: 5px; }
         .subtitle-display { background: #111; padding: 10px 15px; color: white; min-height: 40px; font-size: 0.85em; border-top: 1px solid #333; z-index: 5; }
-        .player-back { position: absolute; top: 8px; left: 8px; z-index: 150; text-shadow: 0 0 5px #000; font-size: 0.8em; }
-        .hide-cursor { cursor: none !important; }
-        .seek-feedback { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(255,255,255,0.2); border-radius: 50%; width: 60px; height: 60px; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.2s; z-index: 40; color: white; font-weight: bold; }
-        .seek-left { left: 10%; } .seek-right { right: 10%; }
-        #centerFeedback { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.5); border-radius: 50%; padding: 15px; opacity: 0; pointer-events: none; z-index: 45; transition: opacity 0.3s; color: white; }
+        .player-back { position: absolute; top: 8px; left: 8px; z-index: 150; text-shadow: 0 0 5px #000; font-size: 0.8em; text-decoration: none; color: white; }
         select.player-select { background:#222; color:white; border:none; border-radius:4px; padding:3px; font-size: 0.8em; cursor: pointer; }
 
-        /* Mobile Adjustments */
         @media (max-width: 600px) {
             .time-display { display: none; }
             .mobile-time { display: block; }
@@ -185,18 +204,25 @@ def player(folder_name, video_name):
     <!DOCTYPE html><html><head><title>Anisub Player</title><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">{KODI_STYLE}{player_styles}</head>
     <body>
         <div id="mainPlayerContainer">
-            <a href="{BASE_PATH}/show/{{{{ folder_name | urlencode }}}}" class="back-btn player-back">← BACK</a>
-            <div class="player-wrapper" id="videoArea" onmousemove="resetTimer()" onclick="handleGlobalClick(event)">
+            <a href="{BASE_PATH}/show/{{{{ folder_name | urlencode }}}}" class="back-btn player-back ui-element">← BACK</a>
+
+            <div class="player-wrapper" id="videoArea" onclick="handleGlobalClick(event)" onmousemove="showUI()">
                 <video id="videoPlayer" playsinline preload="metadata">
                     <source id="videoSource" src="{BASE_PATH}/stream/{{{{ folder_name | urlencode }}}}/{{{{ video_name | urlencode }}}}" type="video/mp4">
                     <track id="mainSub" kind="subtitles" src="{BASE_PATH}/sub/{{{{ folder_name | urlencode }}}}/{{{{ srt_name | urlencode }}}}" default>
                 </video>
-                <div id="centerFeedback"><svg width="30" height="30" fill="white" viewBox="0 0 24 24" id="feedbackIcon"></svg></div>
-                <div id="seekL" class="seek-feedback seek-left">-10s</div>
-                <div id="seekR" class="seek-feedback seek-right">+10s</div>
+
+                <div id="centerFeedback" class="ui-element"><svg width="40" height="40" fill="white" viewBox="0 0 24 24" id="feedbackIcon"></svg></div>
+
+                <div id="seekL" class="seek-ripple left"><svg width="40" height="40" fill="white" viewBox="0 0 24 24"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/></svg><div class="seek-text" id="seekTextL">10 seconds</div></div>
+                <div id="seekR" class="seek-ripple right"><svg width="40" height="40" fill="white" viewBox="0 0 24 24"><path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/></svg><div class="seek-text" id="seekTextR">10 seconds</div></div>
+
                 <div id="customSubs"><span class="sub-inner" id="subSpan"></span></div>
-                <div id="previewContainer"><img id="previewImg" style="width:100%; height:auto;" src=""><div id="previewTime" style="font-size:0.7em; text-align:center; padding:2px; color:var(--accent);">00:00</div></div>
-                <div class="custom-controls" id="controlsBar" onclick="event.stopPropagation()">
+                <div id="previewContainer" style="position: absolute; bottom: 100px; left: 50%; transform: translateX(-50%); width: 140px; border: 1px solid var(--accent); border-radius: 4px; background: #000; display: none; flex-direction: column; z-index: 200; overflow: hidden;">
+                    <img id="previewImg" style="width:100%; height:auto;" src=""><div id="previewTime" style="font-size:0.7em; text-align:center; padding:2px; color:var(--accent);">00:00</div>
+                </div>
+
+                <div class="custom-controls ui-element" id="controlsBar" onclick="event.stopPropagation()">
                     <div class="seek-container">
                         <input type="range" class="seek-bar" id="seekBar" value="0" step="0.1" oninput="updatePreview(this.value)" onchange="manualSeek(this.value)" onmousemove="handleHover(event)" onmouseenter="showPreview()" onmouseleave="hidePreview()" onmousedown="showPreview()" onmouseup="hidePreview()" ontouchstart="showPreview()" ontouchend="hidePreview()">
                         <div class="mobile-time"><span id="currTimeMob">0:00</span> / <span id="totalTimeMob">0:00</span></div>
@@ -206,7 +232,7 @@ def player(folder_name, video_name):
                             <button class="control-btn" onclick="location.href='{BASE_PATH}/play/{{{{ folder_name | urlencode }}}}/{{{{ prev_ep | urlencode }}}}'" {{{{ 'disabled' if prev_ep is none else '' }}}}>
                                 <svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
                             </button>
-                            <button class="control-btn" onclick="togglePlay(true)"><svg viewBox="0 0 24 24" id="playIcon"><path d="M8 5v14l11-7z"/></svg></button>
+                            <button class="control-btn" onclick="togglePlay()" id="playBtn"><svg viewBox="0 0 24 24" id="playIcon"></svg></button>
                             <button class="control-btn" onclick="location.href='{BASE_PATH}/play/{{{{ folder_name | urlencode }}}}/{{{{ next_ep | urlencode }}}}'" {{{{ 'disabled' if next_ep is none else '' }}}}>
                                 <svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
                             </button>
@@ -222,7 +248,7 @@ def player(folder_name, video_name):
                             <select id="speedSelect" class="player-select" onchange="video.playbackRate = this.value">
                                 <option value="1" selected>1x</option><option value="1.5">1.5x</option><option value="2">2x</option>
                             </select>
-                            <button class="control-btn" onclick="toggleCC()"><svg viewBox="0 0 24 24"><path d="M19 4H5c-1.11 0-2 .9-2 2v12c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 7H9.5V10h-2v4h2v-1H11v1c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1zm7 0h-1.5V10h-2v4h2v-1H18v1c0 .55-.45 1-1 1h-3c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1z"/></svg></button>
+                            <button class="control-btn" onclick="toggleCC()"><svg viewBox="0 0 24 24"><path d="M19 4H5c-1.11 0-2 .9-2 2v12c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 7H9.5V10h-2v4h2v-1H11v1c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c-.55 0 1 .45 1 1v1zm7 0h-1.5V10h-2v4h2v-1H18v1c0 .55-.45 1-1 1h-3c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1z"/></svg></button>
                             <button class="control-btn" onclick="toggleFullScreen()"><svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg></button>
                         </div>
                     </div>
@@ -233,68 +259,110 @@ def player(folder_name, video_name):
         <script>
             const video = document.getElementById('videoPlayer');
             const videoArea = document.getElementById('videoArea');
-            const controlsBar = document.getElementById('controlsBar');
             const playIcon = document.getElementById('playIcon');
-            const seekBar = document.getElementById('seekBar');
-            const currTimeEl = document.getElementById('currTime');
-            const totalTimeEl = document.getElementById('totalTime');
-            const currTimeMob = document.getElementById('currTimeMob');
-            const totalTimeMob = document.getElementById('totalTimeMob');
-            const previewContainer = document.getElementById('previewContainer');
-            const previewImg = document.getElementById('previewImg');
-            const previewTime = document.getElementById('previewTime');
-            const subSpan = document.getElementById('subSpan');
-            const subText = document.getElementById('subText');
-            const subContainer = document.getElementById('customSubs');
-            const centerFeedback = document.getElementById('centerFeedback');
             const feedbackIcon = document.getElementById('feedbackIcon');
+            const seekBar = document.getElementById('seekBar');
+            const currTimeEl = document.getElementById('currTime'), currTimeMob = document.getElementById('currTimeMob');
+            const totalTimeEl = document.getElementById('totalTime'), totalTimeMob = document.getElementById('totalTimeMob');
+            const subSpan = document.getElementById('subSpan'), subText = document.getElementById('subText');
+            const previewContainer = document.getElementById('previewContainer'), previewImg = document.getElementById('previewImg'), previewTime = document.getElementById('previewTime');
             const resSelect = document.getElementById('resSelect');
 
-            let uiTimer, lastClick = 0;
-            let isPreviewLoading = false;
-            let pendingPreviewTime = null;
+            let uiVisible = true;
+            let uiTimeout = null;
+            let clickTimer = null;
+            let lastTapTime = 0;
+            let currentSeekSum = 0;
+            let seekResetTimer = null;
 
             function formatTime(sec) {{
                 if (isNaN(sec)) return "0:00";
-                const h = Math.floor(sec / 3600);
-                const m = Math.floor((sec % 3600) / 60);
-                const s = Math.floor(sec % 60);
+                const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = Math.floor(sec % 60);
                 return h > 0 ? `${{h}}:${{m.toString().padStart(2, '0')}}:${{s.toString().padStart(2, '0')}}` : `${{m}}:${{s.toString().padStart(2, '0')}}`;
+            }}
+
+            function showUI() {{
+                uiVisible = true;
+                videoArea.classList.add('ui-on');
+                document.querySelectorAll('.ui-element').forEach(el => el.classList.remove('ui-hidden'));
+                resetTimer();
+            }}
+
+            function hideUI() {{
+                if (video.paused) return;
+                uiVisible = false;
+                videoArea.classList.remove('ui-on');
+                document.querySelectorAll('.ui-element').forEach(el => el.classList.add('ui-hidden'));
+            }}
+
+            function resetTimer() {{
+                if (uiTimeout) clearTimeout(uiTimeout);
+                if (!video.paused) uiTimeout = setTimeout(hideUI, 3000);
+            }}
+
+            function forceUI(show) {{
+                if (show) showUI(); else hideUI();
             }}
 
             function handleGlobalClick(e) {{
                 const now = Date.now();
                 const rect = videoArea.getBoundingClientRect();
                 const x = e.clientX - rect.left;
-                if (now - lastClick < 300) {{
-                    if (x < rect.width / 3) triggerSeek('L');
-                    else if (x > (rect.width / 3) * 2) triggerSeek('R');
-                    lastClick = 0;
-                }} else {{
-                    if (x > rect.width * 0.3 && x < rect.width * 0.7) togglePlay(true);
-                    lastClick = now;
+                const y = e.clientY - rect.top;
+
+                if (clickTimer) clearTimeout(clickTimer);
+
+                if (now - lastTapTime < 300) {{
+                    lastTapTime = now;
+                    if (x < rect.width * 0.4) triggerYouTubeSeek('L');
+                    else if (x > rect.width * 0.6) triggerYouTubeSeek('R');
+                    return;
                 }}
-                resetTimer();
+
+                lastTapTime = now;
+                clickTimer = setTimeout(() => {{
+                    const isCenter = x > rect.width * 0.35 && x < rect.width * 0.65 &&
+                                   y > rect.height * 0.3 && y < rect.height * 0.7;
+
+                    if (!uiVisible) {{
+                        showUI();
+                    }} else if (isCenter) {{
+                        togglePlay(true);
+                    }} else {{
+                        hideUI();
+                    }}
+                }}, 250);
             }}
 
-            function togglePlay(showFeedback = false) {{
+            function updatePlayIcon() {{
+                const path = video.paused ? 'M8 5v14l11-7z' : 'M6 19h4V5H6v14zm8-14v14h4V5h-4z';
+                const html = `<path d="${{path}}"/>`;
+                playIcon.innerHTML = html;
+                feedbackIcon.innerHTML = html;
+            }}
+
+            function togglePlay(autoHide = false) {{
                 if (video.paused) {{
                     video.play();
-                    playIcon.innerHTML = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
-                    if(showFeedback) showCenterIcon('<path d="M8 5v14l11-7z"/>');
+                    if (autoHide) hideUI(); else resetTimer();
                 }} else {{
                     video.pause();
-                    playIcon.innerHTML = '<path d="M8 5v14l11-7z"/>';
-                    if(showFeedback) showCenterIcon('<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>');
+                    showUI();
                 }}
+                updatePlayIcon();
             }}
 
-            function showCenterIcon(path) {{ feedbackIcon.innerHTML = path; centerFeedback.style.opacity = '1'; setTimeout(() => centerFeedback.style.opacity = '0', 400); }}
-
-            function triggerSeek(dir) {{
+            function triggerYouTubeSeek(dir) {{
+                if (seekResetTimer) clearTimeout(seekResetTimer);
+                currentSeekSum += 10;
                 const el = document.getElementById(dir === 'L' ? 'seekL' : 'seekR');
+                const txt = document.getElementById(dir === 'L' ? 'seekTextL' : 'seekTextR');
                 video.currentTime += (dir === 'L' ? -10 : 10);
-                el.style.opacity = '1'; setTimeout(() => {{ el.style.opacity = '0'; }}, 500);
+                txt.innerText = `${{currentSeekSum}} seconds`;
+                el.style.opacity = '1';
+                setTimeout(() => {{ el.style.opacity = '0'; }}, 600);
+                seekResetTimer = setTimeout(() => {{ currentSeekSum = 0; }}, 1000);
+                resetTimer();
             }}
 
             function changeResolution(res) {{
@@ -306,66 +374,39 @@ def player(folder_name, video_name):
                 video.onloadedmetadata = () => {{
                     video.currentTime = currentTime;
                     if (!isPaused) video.play();
-                    video.onloadedmetadata = null;
                 }};
             }}
-
-            function handleHover(e) {{
-                const rect = seekBar.getBoundingClientRect();
-                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-                const x = clientX - rect.left;
-                const percent = Math.min(Math.max(0, x / rect.width), 1) * 100;
-                updatePreview(percent);
-            }}
-
-            function showPreview() {{ previewContainer.style.display = 'flex'; }}
-            function hidePreview() {{ setTimeout(() => {{ previewContainer.style.display = 'none'; }}, 100); }}
 
             function updatePreview(val) {{
                 const targetTime = (val / 100) * video.duration;
                 previewTime.innerText = formatTime(targetTime);
                 previewContainer.style.left = val + "%";
-                if (!isPreviewLoading) loadPreviewFrame(targetTime);
-                else pendingPreviewTime = targetTime;
+                loadPreviewFrame(targetTime);
             }}
 
+            let isPreviewLoading = false, pendingPreviewTime = null;
             function loadPreviewFrame(time) {{
-                if (isNaN(time)) return;
+                if (isNaN(time) || isPreviewLoading) {{ pendingPreviewTime = time; return; }}
                 isPreviewLoading = true;
                 const url = `{BASE_PATH}/preview/{{{{ folder_name | urlencode }}}}/{{{{ video_name | urlencode }}}}?t=${{time}}`;
                 const img = new Image();
                 img.onload = () => {{
-                    previewImg.src = url;
-                    isPreviewLoading = false;
+                    previewImg.src = url; isPreviewLoading = false;
                     if (pendingPreviewTime) {{ let t = pendingPreviewTime; pendingPreviewTime = null; loadPreviewFrame(t); }}
                 }};
                 img.src = url;
             }}
 
-            function manualSeek(val) {{ video.currentTime = (val / 100) * video.duration; }}
-
-            function resetTimer() {{
-                controlsBar.style.opacity = '1';
-                controlsBar.style.pointerEvents = 'auto';
-                videoArea.classList.remove('hide-cursor');
-                subContainer.style.bottom = document.fullscreenElement ? "30%" : "15%";
-                clearTimeout(uiTimer);
-                if (!video.paused) {{
-                    uiTimer = setTimeout(() => {{
-                        controlsBar.style.opacity = '0';
-                        controlsBar.style.pointerEvents = 'none';
-                        videoArea.classList.add('hide-cursor');
-                        subContainer.style.bottom = "2%";
-                    }}, 3000);
-                }}
+            function handleHover(e) {{
+                const rect = seekBar.getBoundingClientRect();
+                const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+                updatePreview(Math.min(Math.max(0, x / rect.width), 1) * 100);
             }}
 
-            function toggleCC() {{
-                const track = video.textTracks[0];
-                track.mode = (track.mode === 'disabled') ? 'hidden' : 'disabled';
-                if (track.mode === 'disabled') subSpan.innerText = "";
-                resetTimer();
-            }}
+            function showPreview() {{ previewContainer.style.display = 'flex'; }}
+            function hidePreview() {{ setTimeout(() => {{ previewContainer.style.display = 'none'; }}, 100); }}
+            function manualSeek(val) {{ video.currentTime = (val / 100) * video.duration; resetTimer(); }}
+            function toggleCC() {{ const t = video.textTracks[0]; t.mode = (t.mode === 'disabled') ? 'hidden' : 'disabled'; if(t.mode==='disabled') subSpan.innerText=""; }}
 
             function toggleFullScreen() {{
                 if (!document.fullscreenElement) {{
@@ -376,22 +417,22 @@ def player(folder_name, video_name):
 
             video.addEventListener('timeupdate', () => {{
                 seekBar.value = (video.currentTime / video.duration) * 100 || 0;
-                const formatted = formatTime(video.currentTime);
-                currTimeEl.innerText = formatted;
-                currTimeMob.innerText = formatted;
+                const f = formatTime(video.currentTime);
+                currTimeEl.innerText = currTimeMob.innerText = f;
                 if (Math.floor(video.currentTime) % 10 === 0) {{
-                    const history = JSON.parse(localStorage.getItem('anisub_history') || '{{}}');
-                    history["{folder_name}"] = {{ last_ep: "{video_name}", time: video.currentTime }};
-                    localStorage.setItem('anisub_history', JSON.stringify(history));
+                    const h = JSON.parse(localStorage.getItem('anisub_history') || '{{}}');
+                    h["{folder_name}"] = {{ last_ep: "{video_name}", time: video.currentTime }};
+                    localStorage.setItem('anisub_history', JSON.stringify(h));
                 }}
             }});
 
             video.addEventListener('loadedmetadata', () => {{
-                const formattedTotal = formatTime(video.duration);
-                totalTimeEl.innerText = formattedTotal;
-                totalTimeMob.innerText = formattedTotal;
-                const hist = JSON.parse(localStorage.getItem('anisub_history') || '{{}}');
-                if (hist["{folder_name}"]?.last_ep === "{video_name}") video.currentTime = hist["{folder_name}"].time;
+                const f = formatTime(video.duration);
+                totalTimeEl.innerText = totalTimeMob.innerText = f;
+                const h = JSON.parse(localStorage.getItem('anisub_history') || '{{}}');
+                if (h["{folder_name}"]?.last_ep === "{video_name}") video.currentTime = h["{folder_name}"].time;
+                updatePlayIcon();
+                resetTimer();
             }});
 
             window.addEventListener('DOMContentLoaded', () => {{
@@ -400,25 +441,25 @@ def player(folder_name, video_name):
                     resSelect.value = prefRes;
                     video.src = `{BASE_PATH}/stream/{{{{ folder_name | urlencode }}}}/{{{{ video_name | urlencode }}}}?res=${{prefRes}}`;
                 }}
+                updatePlayIcon();
             }});
 
             const track = video.textTracks[0];
             track.mode = 'hidden';
             track.oncuechange = function() {{
-                if (this.activeCues?.length > 0) {{
-                    subSpan.innerText = subText.innerText = this.activeCues[0].text;
-                }} else {{ subSpan.innerText = ""; }}
+                if (this.activeCues?.length > 0) subSpan.innerText = subText.innerText = this.activeCues[0].text;
+                else subSpan.innerText = "";
             }};
 
             document.addEventListener('keydown', (e) => {{
                 if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+                showUI();
                 switch (e.key) {{
-                    case 'ArrowLeft': e.preventDefault(); video.currentTime = Math.max(0, video.currentTime - 3); triggerSeek('L'); break;
-                    case 'ArrowRight': e.preventDefault(); video.currentTime = Math.min(video.duration, video.currentTime + 3); triggerSeek('R'); break;
+                    case 'ArrowLeft': e.preventDefault(); triggerYouTubeSeek('L'); break;
+                    case 'ArrowRight': e.preventDefault(); triggerYouTubeSeek('R'); break;
                     case ' ': e.preventDefault(); togglePlay(); break;
                     case 'f': e.preventDefault(); toggleFullScreen(); break;
                  }}
-                resetTimer();
             }});
         </script>
     </body></html>
