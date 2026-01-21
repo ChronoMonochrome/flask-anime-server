@@ -426,9 +426,31 @@ def player(folder_name, video_name):
 
 @anisub_bp.route('/stream/<path:folder_name>/<path:video_name>')
 def stream_video(folder_name, video_name):
-    path = os.path.join(BASE_DIR, unquote(folder_name), unquote(video_name))
-    if not os.path.exists(path): abort(404)
-    return send_file(path, conditional=True)
+    folder_name = unquote(folder_name)
+    video_name = unquote(video_name)
+
+    # Get the 'res' parameter from the URL (?res=240p)
+    requested_res = request.args.get('res', 'original')
+
+    # Base directory for the show
+    folder_path = os.path.join(BASE_DIR, folder_name)
+
+    # Determine the actual file path
+    if requested_res != 'original':
+        # Look inside the subfolder (e.g., "Yuru Camp/240p/video.mp4")
+        target_path = os.path.join(folder_path, requested_res, video_name)
+
+        # Fallback to original if the specific resolution file doesn't exist
+        if not os.path.exists(target_path):
+            target_path = os.path.join(folder_path, video_name)
+    else:
+        target_path = os.path.join(folder_path, video_name)
+
+    if not os.path.exists(target_path):
+        abort(404)
+
+    # Use your existing range-request helper or send_file
+    return send_from_directory(os.path.dirname(target_path), os.path.basename(target_path))
 
 @anisub_bp.route('/poster_file/<path:folder_name>/<path:filename>')
 def serve_poster(folder_name, filename):
